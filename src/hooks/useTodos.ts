@@ -6,7 +6,7 @@ export type Todo = {
   id: string;
   text: string;
   completed: boolean;
-  craetedAt: string;
+  createdAt: string;
 };
 
 const GET_TODOS = gql`
@@ -21,7 +21,7 @@ const GET_TODOS = gql`
 `;
 
 const ADD_TODO = gql`
-  mutation AddTodo {
+  mutation AddTodo($text: String!) {
     addTodo(text: $text) {
       id
       text
@@ -32,11 +32,11 @@ const ADD_TODO = gql`
 `;
 
 const TOGGLE_TODO = gql`
-  mutation ToggleTodo {
+  mutation ToggleTodo($id: ID!) {
     toggleTodo(id: $id) {
       id
       text
-      compeletd
+      completed
       createdAt
     }
   }
@@ -69,11 +69,35 @@ export function useAddTodo() {
         {
           text,
         },
-      );
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["todos"] });
-    },
+      )   },
+
+
+      onMutate: async(text: string) =>{
+        await queryClient.cancelQueries({queryKey: ['todos']});
+        const previousTodos = queryClient.getQueryData<Todo[]>(['todos']);
+
+        const optimisticTodo: Todo = {
+           id: 'temp-' + Date.now(),
+           text,
+           completed: false,
+           createdAt: new Date().toISOString()
+        };
+
+        queryClient.setQueryData(['todos'], (old:Todo[] = []) => [optimisticTodo, ...old]);
+
+        return {previousTodos};
+      },
+
+
+      onError: (err, text, context) => {
+         if(context?.previousTodos){
+          queryClient.setQueryData(['todos'],(old:Todo[]= []) => [...old]);
+         }
+      },
+
+      onSettled: ()=> {
+        queryClient.invalidateQueries({queryKey: ['todos']});
+      }
   });
 }
 
@@ -87,10 +111,31 @@ export function useToggleTodo() {
       );
       return toggleTodo;
     },
+    
+    onMutate: async(id: string) => {
+      queryClient.cancelQueries({queryKey: ['todos']});
 
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["todos"] });
+      const previousTodos = queryClient.getQueryData<Todo[]>(['todos']);
+      
+      queryClient.setQueryData(['todos'], (old:Todo[]=[]) => {
+        old.map((todo) => {
+          if(todo.id === id)
+            return {...todo, completed: !todo.completed};
+          return todo;
+        })
+        
+      });
+
+      return {previousTodos};
     },
+    onError: (err, id , context) => {
+       if(context?.previousTodos)
+        queryClient.setQueryData(['todos'] , context.previousTodos);
+    },
+
+    onSettled: async() =>{
+      queryClient.invalidateQueries({queryKey: ['todos']});
+    }
   });
 }
 
@@ -101,7 +146,25 @@ export function useDeleteTodo() {
     mutationFn: async (id: string) => {
       await graphqlClient.request(DELETE_TODO, { id });
     },
-    onSuccess: () => {
+    onMutate: async (id: string) => {
+      queryClient.cancelQueries({ queryKey: ["todos"] });
+
+      const previousTodos = queryClient.getQueryData<Todo[]>(["todos"]);
+
+      queryClient.setQueryData(["todos"], (old: Todo[] = []) => {
+        old.filter((todo) => {
+          if (todo.id !== id) return todo;
+        });
+      });
+
+      return { previousTodos };
+    },
+    onError: (err, id, context) => {
+      if (context?.previousTodos)
+        queryClient.setQueryData(["todos"], context.previousTodos);
+    },
+
+    onSettled: async () => {
       queryClient.invalidateQueries({ queryKey: ["todos"] });
     },
   });
